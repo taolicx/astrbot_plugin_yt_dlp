@@ -4,7 +4,7 @@ display_name: 全能视频下载助手
 # 描述
 description: 基于 yt-dlp 的 AstrBot 视频解析、下载和直链提取插件，支持 Bilibili、YouTube、Twitter/X、TikTok 等平台。
 # 版本号
-version: 1.0.3
+version: 1.0.4
 # 作者
 author: taolicx
 # 插件的仓库地址

@@ -16,12 +16,12 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from astrbot.api.all import *
 from astrbot.api.message_components import Video, Plain, File
 
-@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.3")
+@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.4")
 class YtDlpPlugin(Star):
     def __init__(self, context: Context, config: dict, *args, **kwargs):
         super().__init__(context)
         self.logger = logging.getLogger("astrbot_plugin_yt_dlp")
-        self.logger.info("加载全能视频下载助手 (v1.0.3)...")
+        self.logger.info("加载全能视频下载助手 (v1.0.4)...")
         self.config = config
         
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -102,6 +102,17 @@ class YtDlpPlugin(Star):
             ):
                 return url
         return ""
+
+    def _get_url_from_command(self, raw: str, arg_url: str, prefixes: list[str]) -> str:
+        full_text = arg_url or ""
+        for prefix in prefixes:
+            if prefix in raw:
+                full_text = raw.split(prefix, 1)[1].strip()
+                break
+        url = self._extract_first_supported_url(full_text) or full_text.strip()
+        if "--y" not in url and "--y" in raw:
+            url = f"{url} --y"
+        return url.strip()
 
     def _format_size(self, size_bytes):
         if size_bytes is None:
@@ -404,22 +415,15 @@ class YtDlpPlugin(Star):
                     if os.path.exists(f): os.remove(f)
         asyncio.create_task(_clean())
 
-    @command("download")
+    @command("download", priority=20)
     async def cmd_download_file(self, event: AstrMessageEvent, url: str = ""):
         raw = event.message_str
-        # 兼容多种格式: /download, download, 或直接url
-        full_url = url
-        for prefix in ["/download ", "download "]:
-            if prefix in raw:
-                full_url = raw.split(prefix, 1)[1].strip()
-                break
-        # 如果url参数里没有--y，但原始消息有，补上
-        if "--y" not in full_url and "--y" in raw:
-            full_url = full_url + " --y"
+        full_url = self._get_url_from_command(raw, url, ["/download ", "download "])
+        event.stop_event()
         async for res in self._core_download_handler(event, full_url, "file", "merged"):
             yield res
 
-    @event_message_type(EventMessageType.ALL, priority=1)
+    @event_message_type(EventMessageType.ALL, priority=20)
     async def auto_download_from_message(self, event: AstrMessageEvent):
         """自动识别普通消息中的视频链接并下载。"""
         if not self.auto_parse_enabled:
@@ -435,30 +439,23 @@ class YtDlpPlugin(Star):
         async for res in self._core_download_handler(event, full_url, "file", "merged"):
             yield res
 
-    @command("video")
+    @command("video", priority=20)
     async def cmd_download_video(self, event: AstrMessageEvent, url: str = ""):
         raw = event.message_str
-        full_url = url
-        for prefix in ["/video ", "video "]:
-            if prefix in raw:
-                full_url = raw.split(prefix, 1)[1].strip()
-                break
-        if "--y" not in full_url and "--y" in raw:
-            full_url = full_url + " --y"
+        full_url = self._get_url_from_command(raw, url, ["/video ", "video "])
+        event.stop_event()
         async for res in self._core_download_handler(event, full_url, "video", "merged"):
             yield res
-    @command("直链")
+
+    @command("直链", priority=20)
     async def cmd_get_direct_url(self, event: AstrMessageEvent, url: str = ""):
         """提取视频直链，不下载"""
         raw = event.message_str
-        full_url = url
-        for prefix in ["/直链 ", "直链 "]:
-            if prefix in raw:
-                full_url = raw.split(prefix, 1)[1].strip()
-                break
+        full_url = self._get_url_from_command(raw, url, ["/直链 ", "直链 "])
         if not full_url:
             yield event.plain_result("❌ 请提供视频链接，例如: /直链 https://www.youtube.com/watch?v=xxx")
             return
+        event.stop_event()
 
         yield event.plain_result("⏳ 正在解析直链，请稍候...")
 
