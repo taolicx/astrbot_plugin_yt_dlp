@@ -16,12 +16,12 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from astrbot.api.all import *
 from astrbot.api.message_components import Video, Plain, File
 
-@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.4")
+@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.5")
 class YtDlpPlugin(Star):
     def __init__(self, context: Context, config: dict, *args, **kwargs):
         super().__init__(context)
         self.logger = logging.getLogger("astrbot_plugin_yt_dlp")
-        self.logger.info("加载全能视频下载助手 (v1.0.4)...")
+        self.logger.info("加载全能视频下载助手 (v1.0.5)...")
         self.config = config
         
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -113,6 +113,13 @@ class YtDlpPlugin(Star):
         if "--y" not in url and "--y" in raw:
             url = f"{url} --y"
         return url.strip()
+
+    async def _yield_and_stop(self, event: AstrMessageEvent, result_stream):
+        try:
+            async for res in result_stream:
+                yield res
+        finally:
+            event.stop_event()
 
     def _format_size(self, size_bytes):
         if size_bytes is None:
@@ -419,8 +426,10 @@ class YtDlpPlugin(Star):
     async def cmd_download_file(self, event: AstrMessageEvent, url: str = ""):
         raw = event.message_str
         full_url = self._get_url_from_command(raw, url, ["/download ", "download "])
-        event.stop_event()
-        async for res in self._core_download_handler(event, full_url, "file", "merged"):
+        async for res in self._yield_and_stop(
+            event,
+            self._core_download_handler(event, full_url, "file", "merged"),
+        ):
             yield res
 
     @event_message_type(EventMessageType.ALL, priority=20)
@@ -435,16 +444,20 @@ class YtDlpPlugin(Star):
         full_url = self._extract_first_supported_url(raw)
         if not full_url:
             return
-        event.stop_event()
-        async for res in self._core_download_handler(event, full_url, "file", "merged"):
+        async for res in self._yield_and_stop(
+            event,
+            self._core_download_handler(event, full_url, "file", "merged"),
+        ):
             yield res
 
     @command("video", priority=20)
     async def cmd_download_video(self, event: AstrMessageEvent, url: str = ""):
         raw = event.message_str
         full_url = self._get_url_from_command(raw, url, ["/video ", "video "])
-        event.stop_event()
-        async for res in self._core_download_handler(event, full_url, "video", "merged"):
+        async for res in self._yield_and_stop(
+            event,
+            self._core_download_handler(event, full_url, "video", "merged"),
+        ):
             yield res
 
     @command("直链", priority=20)
@@ -455,7 +468,6 @@ class YtDlpPlugin(Star):
         if not full_url:
             yield event.plain_result("❌ 请提供视频链接，例如: /直链 https://www.youtube.com/watch?v=xxx")
             return
-        event.stop_event()
 
         yield event.plain_result("⏳ 正在解析直链，请稍候...")
 
@@ -563,3 +575,4 @@ class YtDlpPlugin(Star):
         lines.append("⚠️ 直链有时效性，请尽快使用。")
 
         yield event.plain_result("\n".join(lines))
+        event.stop_event()
