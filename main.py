@@ -16,12 +16,12 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from astrbot.api.all import *
 from astrbot.api.message_components import Video, Plain, File
 
-@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.2")
+@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.3")
 class YtDlpPlugin(Star):
     def __init__(self, context: Context, config: dict, *args, **kwargs):
         super().__init__(context)
         self.logger = logging.getLogger("astrbot_plugin_yt_dlp")
-        self.logger.info("加载全能视频下载助手 (v1.0.2)...")
+        self.logger.info("加载全能视频下载助手 (v1.0.3)...")
         self.config = config
         
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +41,16 @@ class YtDlpPlugin(Star):
         self.max_size_mb = self.config.get("download", {}).get("max_size_mb", 100)
         self.delete_seconds = self.config.get("download", {}).get("auto_delete_seconds", 60)
         self.prefer_h264 = self.config.get("download", {}).get("prefer_h264", True)
+        self.auto_parse_enabled = self.config.get("auto_parse", {}).get("enabled", True)
+        self.auto_parse_keywords = self.config.get("auto_parse", {}).get(
+            "platform_keywords",
+            "douyin.com,b23.tv,bilibili.com,youtu.be,youtube.com,tiktok.com,x.com,twitter.com",
+        )
+        self.auto_parse_keyword_list = [
+            item.strip().lower()
+            for item in self.auto_parse_keywords.split(",")
+            if item.strip()
+        ]
         
         self.server_port = 0
         self.server_ip = self._get_local_ip()
@@ -79,6 +89,19 @@ class YtDlpPlugin(Star):
             return "video"
         name = re.sub(r'[\\/*?:"<>|]', '_', name)
         return name.replace('\n', ' ').replace('\r', '')[:100].strip()
+
+    def _extract_first_supported_url(self, text: str) -> str:
+        if not text:
+            return ""
+        url_pattern = re.compile(r"https?://[^\s，。！？、；：'\"<>]+", re.IGNORECASE)
+        for match in url_pattern.finditer(text):
+            url = match.group(0).rstrip(").,，。！？、；：")
+            lower_url = url.lower()
+            if not self.auto_parse_keyword_list or any(
+                keyword in lower_url for keyword in self.auto_parse_keyword_list
+            ):
+                return url
+        return ""
 
     def _format_size(self, size_bytes):
         if size_bytes is None:
@@ -393,6 +416,22 @@ class YtDlpPlugin(Star):
         # 如果url参数里没有--y，但原始消息有，补上
         if "--y" not in full_url and "--y" in raw:
             full_url = full_url + " --y"
+        async for res in self._core_download_handler(event, full_url, "file", "merged"):
+            yield res
+
+    @event_message_type(EventMessageType.ALL, priority=1)
+    async def auto_download_from_message(self, event: AstrMessageEvent):
+        """自动识别普通消息中的视频链接并下载。"""
+        if not self.auto_parse_enabled:
+            return
+        raw = event.message_str or ""
+        stripped = raw.strip()
+        if not stripped or stripped.startswith(("/", "download ", "video ", "直链 ")):
+            return
+        full_url = self._extract_first_supported_url(raw)
+        if not full_url:
+            return
+        event.stop_event()
         async for res in self._core_download_handler(event, full_url, "file", "merged"):
             yield res
 

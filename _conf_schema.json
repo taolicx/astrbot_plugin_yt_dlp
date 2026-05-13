@@ -1,4 +1,22 @@
 {
+  "auto_parse": {
+    "description": "自动识别链接",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "自动处理普通消息中的视频链接",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，群聊或私聊里直接发送支持的平台链接也会自动下载"
+      },
+      "platform_keywords": {
+        "description": "自动识别的平台关键词",
+        "type": "string",
+        "default": "douyin.com,b23.tv,bilibili.com,youtu.be,youtube.com,tiktok.com,x.com,twitter.com",
+        "hint": "英文逗号分隔。链接中包含任一关键词时触发自动下载；留空则尝试处理所有 http/https 链接"
+      }
+    }
+  },
   "proxy": {
     "description": "HTTP 代理设置",
     "type": "object",
