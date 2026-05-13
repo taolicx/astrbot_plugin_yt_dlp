@@ -16,12 +16,12 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from astrbot.api.all import *
 from astrbot.api.message_components import Video, Plain, File
 
-@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.5")
+@register("astrbot_plugin_yt_dlp", "taolicx", "全能视频下载助手", "1.0.6")
 class YtDlpPlugin(Star):
     def __init__(self, context: Context, config: dict, *args, **kwargs):
         super().__init__(context)
         self.logger = logging.getLogger("astrbot_plugin_yt_dlp")
-        self.logger.info("加载全能视频下载助手 (v1.0.5)...")
+        self.logger.info("加载全能视频下载助手 (v1.0.6)...")
         self.config = config
         
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +51,7 @@ class YtDlpPlugin(Star):
             for item in self.auto_parse_keywords.split(",")
             if item.strip()
         ]
+        self.cookies_path = self.config.get("cookies", {}).get("path", "").strip()
         
         self.server_port = 0
         self.server_ip = self._get_local_ip()
@@ -119,7 +120,40 @@ class YtDlpPlugin(Star):
             async for res in result_stream:
                 yield res
         finally:
-            event.stop_event()
+            event._force_stopped = True
+            event.clear_result()
+
+    def _build_ytdlp_opts(self, **overrides):
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "nocheckcertificate": True,
+            "http_headers": {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0 Safari/537.36"
+                ),
+                "Referer": "https://www.douyin.com/",
+            },
+        }
+        if self.proxy_enabled:
+            opts["proxy"] = self.proxy_url
+        if self.cookies_path:
+            opts["cookiefile"] = self.cookies_path
+        opts.update(overrides)
+        return opts
+
+    def _humanize_ytdlp_error(self, err: Exception) -> str:
+        msg = str(err).replace("ERROR: ", "").strip()
+        if "Fresh cookies" in msg or "cookies" in msg.lower():
+            return (
+                "目标平台需要 cookies 才能解析。请在插件配置里填写 cookies.txt 路径；"
+                "抖音这类链接经常需要浏览器 cookies。"
+            )
+        if "Unable to connect to proxy" in msg:
+            return "代理连接失败，请检查插件代理配置或本机代理是否正在运行。"
+        return msg[:300] if msg else "未知错误"
 
     def _format_size(self, size_bytes):
         if size_bytes is None:
@@ -167,12 +201,7 @@ class YtDlpPlugin(Star):
 
     async def _get_video_info_safe(self, url):
         # extract_flat=True 加快列表解析速度
-        opts = {
-            "quiet": True, "no_warnings": True, "nocheckcertificate": True,
-            "extract_flat": "in_playlist" 
-        }
-        if self.proxy_enabled:
-            opts["proxy"] = self.proxy_url
+        opts = self._build_ytdlp_opts(extract_flat="in_playlist")
         try:
             info = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: yt_dlp.YoutubeDL(opts).extract_info(url, download=False))
@@ -190,18 +219,15 @@ class YtDlpPlugin(Star):
             return {'is_playlist': False, 'title': info.get('title', ''), 'filesize': sz}
         except Exception as e:
             self.logger.error(f"Info error: {e}")
-            return None
+            return {"error": self._humanize_ytdlp_error(e)}
 
     async def _download_stream(self, url, fmt, tmpl):
-        opts = {
-            "outtmpl": tmpl,
-            "format": fmt,
-            "noplaylist": True,
-            "quiet": True,
-            "ffmpeg_location": None
-        }
-        if self.proxy_enabled:
-            opts["proxy"] = self.proxy_url
+        opts = self._build_ytdlp_opts(
+            outtmpl=tmpl,
+            format=fmt,
+            noplaylist=True,
+            ffmpeg_location=None,
+        )
         def _task():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -221,8 +247,9 @@ class YtDlpPlugin(Star):
         yield event.plain_result(f"⏳ 正在解析资源信息...")
         info = await self._get_video_info_safe(url)
         
-        if not info:
-            yield event.plain_result(f"❌ 无法解析链接，请检查网络或链接有效性。")
+        if not info or info.get("error"):
+            detail = f"\n原因: {info.get('error')}" if info and info.get("error") else ""
+            yield event.plain_result(f"❌ 无法解析链接。{detail}")
             return
 
         ts = int(time.time())
@@ -258,14 +285,12 @@ class YtDlpPlugin(Star):
             # 列表建议限制画质以减小体积
             fmt_v = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
             
-            opts = {
-                "outtmpl": playlist_tmpl,
-                "format": fmt_v,
-                "quiet": True,
-                "ignoreerrors": True,
-                "noplaylist": False,
-            }
-            if self.proxy_enabled: opts["proxy"] = self.proxy_url
+            opts = self._build_ytdlp_opts(
+                outtmpl=playlist_tmpl,
+                format=fmt_v,
+                ignoreerrors=True,
+                noplaylist=False,
+            )
 
             try:
                 await asyncio.get_running_loop().run_in_executor(
@@ -471,15 +496,7 @@ class YtDlpPlugin(Star):
 
         yield event.plain_result("⏳ 正在解析直链，请稍候...")
 
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "nocheckcertificate": True,
-            "noplaylist": True,
-            "skip_download": True,
-        }
-        if self.proxy_enabled:
-            opts["proxy"] = self.proxy_url
+        opts = self._build_ytdlp_opts(noplaylist=True, skip_download=True)
 
         try:
             def _extract():
@@ -488,7 +505,7 @@ class YtDlpPlugin(Star):
 
             info = await asyncio.get_running_loop().run_in_executor(None, _extract)
         except Exception as e:
-            yield event.plain_result(f"❌ 解析失败: {e}")
+            yield event.plain_result(f"❌ 解析失败: {self._humanize_ytdlp_error(e)}")
             return
 
         if not info:
@@ -575,4 +592,5 @@ class YtDlpPlugin(Star):
         lines.append("⚠️ 直链有时效性，请尽快使用。")
 
         yield event.plain_result("\n".join(lines))
-        event.stop_event()
+        event._force_stopped = True
+        event.clear_result()

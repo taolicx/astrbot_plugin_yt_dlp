@@ -35,6 +35,18 @@
       }
     }
   },
+  "cookies": {
+    "description": "Cookies 设置",
+    "type": "object",
+    "items": {
+      "path": {
+        "description": "cookies.txt 路径",
+        "type": "string",
+        "default": "",
+        "hint": "部分平台（尤其抖音）可能需要浏览器导出的 cookies.txt。示例: C:/Users/86132/Desktop/cookies.txt"
+      }
+    }
+  },
   "download": {
     "description": "下载设置",
     "type": "object",
